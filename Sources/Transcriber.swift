@@ -5,7 +5,7 @@ class Transcriber {
     private var context: OpaquePointer?
 
     static let modelKey = "selectedModel"
-    static let defaultModel = "ggml-base.en.bin"
+    static let defaultModel = "ggml-tiny.en.bin"
 
     private var modelPath: String {
         let model = UserDefaults.standard.string(forKey: Transcriber.modelKey) ?? Transcriber.defaultModel

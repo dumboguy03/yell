@@ -10,9 +10,34 @@ class HotkeyManager {
     private var localKeyDown: Any?
     private var localFlags: Any?
 
-    // Ctrl+Option+D
-    private let requiredModifiers: NSEvent.ModifierFlags = [.control, .option]
-    private let triggerKeyCode: UInt16 = UInt16(kVK_ANSI_D)
+    static let keyCodeKey   = "hotkeyKeyCode"
+    static let modifiersKey = "hotkeyModifiers"
+    static let charKey      = "hotkeyChar"
+
+    // Read live from UserDefaults so updates take effect without re-registering
+    private var triggerKeyCode: UInt16 {
+        let v = UserDefaults.standard.integer(forKey: HotkeyManager.keyCodeKey)
+        return v != 0 ? UInt16(v) : UInt16(kVK_ANSI_D)
+    }
+
+    private var requiredModifiers: NSEvent.ModifierFlags {
+        let v = UserDefaults.standard.integer(forKey: HotkeyManager.modifiersKey)
+        return v != 0 ? NSEvent.ModifierFlags(rawValue: UInt(v)) : [.control, .option]
+    }
+
+    static func displayString() -> String {
+        let storedMods = UserDefaults.standard.integer(forKey: modifiersKey)
+        let mods = storedMods != 0
+            ? NSEvent.ModifierFlags(rawValue: UInt(storedMods))
+            : NSEvent.ModifierFlags([.control, .option])
+        let char = UserDefaults.standard.string(forKey: charKey) ?? "D"
+        var s = ""
+        if mods.contains(.control) { s += "⌃" }
+        if mods.contains(.option)  { s += "⌥" }
+        if mods.contains(.shift)   { s += "⇧" }
+        if mods.contains(.command) { s += "⌘" }
+        return s + char
+    }
 
     init(onRecordStart: @escaping () -> Void, onRecordStop: @escaping () -> Void) {
         self.onRecordStart = onRecordStart
@@ -24,7 +49,6 @@ class HotkeyManager {
             guard let self, !self.isHeld else { return }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if event.keyCode == self.triggerKeyCode && mods.contains(self.requiredModifiers) {
-                print("[Yell] Hotkey detected — recording started")
                 self.isHeld = true
                 self.onRecordStart()
             }
@@ -34,27 +58,22 @@ class HotkeyManager {
             guard let self, self.isHeld else { return }
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if !mods.contains(self.requiredModifiers) {
-                print("[Yell] Modifiers released — recording stopped")
                 self.isHeld = false
                 self.onRecordStop()
             }
         }
 
-        // Global monitors (events in other apps — requires Accessibility permission)
         globalKeyDown = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: handleKeyDown)
-        globalFlags = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: handleFlags)
+        globalFlags   = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: handleFlags)
 
-        // Local monitors (events when our own menu is open)
         localKeyDown = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            handleKeyDown(event)
-            return event
+            handleKeyDown(event); return event
         }
         localFlags = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
-            handleFlags(event)
-            return event
+            handleFlags(event); return event
         }
 
-        print("[Yell] Hotkey registered: Ctrl+Option+D (hold to record, release to transcribe)")
+        print("[Yell] Hotkey registered: \(HotkeyManager.displayString()) (hold to record)")
         print("[Yell] Accessibility trusted: \(AXIsProcessTrusted())")
     }
 
