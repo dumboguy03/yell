@@ -70,6 +70,15 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
+# Bundle tiny.en model
+TINY_MODEL="$HOME/.yell/models/ggml-tiny.en.bin"
+if [ -f "$TINY_MODEL" ]; then
+    echo "Bundling ggml-tiny.en.bin..."
+    cp "$TINY_MODEL" "$APP_BUNDLE/Contents/Resources/ggml-tiny.en.bin"
+else
+    echo "⚠️  tiny.en model not found at $TINY_MODEL — run ./download-model.sh first"
+fi
+
 cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

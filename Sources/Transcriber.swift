@@ -9,6 +9,10 @@ class Transcriber {
 
     private var modelPath: String {
         let model = UserDefaults.standard.string(forKey: Transcriber.modelKey) ?? Transcriber.defaultModel
+        // Prefer bundled model, fall back to ~/.yell/models/
+        if let bundled = Bundle.main.path(forResource: model, ofType: nil) {
+            return bundled
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.yell/models/\(model)"
     }

@@ -4,17 +4,20 @@ Press a hotkey, speak, and your words are typed anywhere — no cloud, no subscr
 
 Built on [whisper.cpp](https://github.com/ggerganov/whisper.cpp) with Metal acceleration. Runs entirely on-device.
 
-## Requirements
+## Download
 
-- macOS 14+
-- Apple Silicon (arm64)
-- Xcode Command Line Tools
-- CMake
+Grab the latest `Yell.dmg` from [Releases](../../releases), open it, and drag Yell to Applications.
 
-## Install
+**First launch:** macOS may block the app since it's not notarized. Go to System Settings → Privacy & Security and click "Open Anyway", or right-click the app and choose Open.
+
+Grant microphone and accessibility access when prompted — microphone for recording, accessibility for typing the result.
+
+## Building from source
+
+Requirements: macOS 14+, Apple Silicon, Xcode Command Line Tools, CMake.
 
 ```bash
-# Download the Whisper model (~142MB)
+# Download Whisper models
 ./download-model.sh
 
 # Build
@@ -24,7 +27,11 @@ Built on [whisper.cpp](https://github.com/ggerganov/whisper.cpp) with Metal acce
 open build/Yell.app
 ```
 
-Grant microphone access when prompted.
+To produce a DMG:
+
+```bash
+./package.sh   # outputs dist/Yell.dmg
+```
 
 ## License
 
