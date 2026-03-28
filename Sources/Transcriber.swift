@@ -4,9 +4,21 @@ import CWhisper
 class Transcriber {
     private var context: OpaquePointer?
 
+    static let modelKey = "selectedModel"
+    static let defaultModel = "ggml-base.en.bin"
+
     private var modelPath: String {
+        let model = UserDefaults.standard.string(forKey: Transcriber.modelKey) ?? Transcriber.defaultModel
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.yell/models/ggml-base.en.bin"
+        return "\(home)/.yell/models/\(model)"
+    }
+
+    func reload() -> Bool {
+        if let ctx = context {
+            whisper_free(ctx)
+            context = nil
+        }
+        return loadModel()
     }
 
     func loadModel() -> Bool {

@@ -36,6 +36,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Yell — Hold ⌃⌥D to dictate", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+
+        let modelMenu = NSMenu()
+        let models: [(title: String, file: String)] = [
+            ("Base (accurate)", "ggml-base.en.bin"),
+            ("Tiny (faster)",   "ggml-tiny.en.bin"),
+        ]
+        let current = UserDefaults.standard.string(forKey: Transcriber.modelKey) ?? Transcriber.defaultModel
+        for model in models {
+            let item = NSMenuItem(title: model.title, action: #selector(selectModel(_:)), keyEquivalent: "")
+            item.representedObject = model.file
+            item.state = model.file == current ? .on : .off
+            modelMenu.addItem(item)
+        }
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        menu.addItem(modelItem)
+        menu.setSubmenu(modelMenu, for: modelItem)
+
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
     }
@@ -85,6 +103,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.keyboardInjector.type(text)
             }
         }
+    }
+
+    // MARK: - Model Selection
+
+    @objc private func selectModel(_ sender: NSMenuItem) {
+        guard let file = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(file, forKey: Transcriber.modelKey)
+        if !transcriber.reload() {
+            showModelMissingAlert()
+            return
+        }
+        // Update checkmarks
+        sender.menu?.items.forEach { $0.state = .off }
+        sender.state = .on
     }
 
     // MARK: - Permissions
