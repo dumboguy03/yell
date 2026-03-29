@@ -33,6 +33,9 @@ Requirements: macOS 14+, Apple Silicon, Xcode Command Line Tools, CMake.
 
 # Run
 open build/Yell.app
+
+# Create a .dmg (optional)
+./package.sh
 ```
 
 ## License
