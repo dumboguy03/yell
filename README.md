@@ -1,7 +1,9 @@
 # Yell
 
+<video src="https://github.com/user-attachments/assets/0ed28a2f-fbe5-41ea-bf30-a250fcfbe184"></video>
+
 Press a hotkey, speak, and your words are typed anywhere — no cloud, no subscription.
-* Audio never leaves the device
+- Audio never leaves the device
 - Works offline
 - Free, open source, auditable
 - Built on [whisper.cpp](https://github.com/ggerganov/whisper.cpp) with Metal acceleration.
