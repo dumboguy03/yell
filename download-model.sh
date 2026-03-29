@@ -20,3 +20,4 @@ download_if_missing() {
 
 download_if_missing "ggml-tiny.en.bin"
 download_if_missing "ggml-base.en.bin"
+download_if_missing "ggml-small.en.bin"

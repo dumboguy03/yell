@@ -37,7 +37,7 @@ class Transcriber {
             print("Failed to initialize whisper context")
             return false
         }
-        print("Whisper model loaded successfully")
+        print("[Yell] Loaded model: \(modelPath)")
         return true
     }
 

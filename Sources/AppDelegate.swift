@@ -15,7 +15,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var axStatusItem: NSMenuItem!
     private var tinyModelItem: NSMenuItem!
     private var baseModelItem: NSMenuItem!
-    private var isDownloadingBase = false
     private var hotkeyCapture: HotkeyCapture?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -61,10 +60,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tinyModelItem.state = "ggml-tiny.en.bin" == current ? .on : .off
         modelMenu.addItem(tinyModelItem)
 
-        baseModelItem = NSMenuItem(title: baseModelTitle(), action: #selector(selectModel(_:)), keyEquivalent: "")
+        baseModelItem = NSMenuItem(title: downloadableModelTitle(file: "ggml-base.en.bin", label: "Base"), action: #selector(selectModel(_:)), keyEquivalent: "")
         baseModelItem.representedObject = "ggml-base.en.bin"
         baseModelItem.state = "ggml-base.en.bin" == current ? .on : .off
         modelMenu.addItem(baseModelItem)
+
+        let smallItem = NSMenuItem(title: downloadableModelTitle(file: "ggml-small.en.bin", label: "Small (~466MB)"), action: #selector(selectModel(_:)), keyEquivalent: "")
+        smallItem.representedObject = "ggml-small.en.bin"
+        smallItem.state = "ggml-small.en.bin" == current ? .on : .off
+        modelMenu.addItem(smallItem)
 
         let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
         menu.addItem(modelItem)
@@ -90,13 +94,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func refreshPermissionItems() {
-        let micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        micStatusItem.title  = micGranted ? "Microphone: Granted" : "⚠️ Microphone: Click to Enable"
-        micStatusItem.action = micGranted ? nil : #selector(openMicSettings)
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            micStatusItem.title  = "Microphone: Granted"
+            micStatusItem.action = nil
+        case .denied, .restricted:
+            micStatusItem.title  = "⚠️ Microphone: Click to Enable"
+            micStatusItem.action = #selector(openMicSettings)
+        default: // .notDetermined
+            micStatusItem.title  = "Microphone: Click to Grant"
+            micStatusItem.action = #selector(requestMicPermission)
+        }
 
         let axGranted = AXIsProcessTrusted()
         axStatusItem.title  = axGranted ? "Accessibility: Granted" : "⚠️ Accessibility: Click to Enable"
         axStatusItem.action = axGranted ? nil : #selector(openAxSettings)
+    }
+
+    @objc private func requestMicPermission() {
+        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            DispatchQueue.main.async {
+                self?.refreshPermissionItems()
+            }
+        }
     }
 
     @objc private func openMicSettings() {
@@ -127,28 +147,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Model Selection
 
-    private func baseModelExists() -> Bool {
-        if Bundle.main.path(forResource: "ggml-base.en.bin", ofType: nil) != nil { return true }
+    private func modelExists(_ file: String) -> Bool {
+        if Bundle.main.path(forResource: file, ofType: nil) != nil { return true }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return FileManager.default.fileExists(atPath: "\(home)/.yell/models/ggml-base.en.bin")
+        return FileManager.default.fileExists(atPath: "\(home)/.yell/models/\(file)")
     }
 
-    private func baseModelTitle() -> String {
-        if isDownloadingBase { return "Base — Downloading…" }
-        return baseModelExists() ? "Base (accurate)" : "Base — Download (~142MB)"
+    private func downloadableModelTitle(file: String, label: String) -> String {
+        modelExists(file) ? label : "\(label) — Download"
     }
 
     @objc private func selectModel(_ sender: NSMenuItem) {
         guard let file = sender.representedObject as? String else { return }
 
-        if file == "ggml-base.en.bin" && !baseModelExists() {
+        if !modelExists(file) {
             let alert = NSAlert()
-            alert.messageText = "Download Base Model?"
-            alert.informativeText = "ggml-base.en.bin is ~142MB and will be saved to ~/.yell/models/."
+            alert.messageText = "Download \(file)?"
+            alert.informativeText = "The model will be downloaded and saved to ~/.yell/models/."
             alert.addButton(withTitle: "Download")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
-            downloadBaseModel()
+            downloadModel(file: file, menuItem: sender)
             return
         }
 
@@ -161,36 +180,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             showModelMissingAlert()
             return
         }
-        tinyModelItem.state = .off
-        baseModelItem.state = .off
+        [tinyModelItem, baseModelItem].forEach { $0?.state = .off }
+        // also clear any other model items
+        item.menu?.items.forEach { $0.state = .off }
         item.state = .on
     }
 
-    private func downloadBaseModel() {
-        isDownloadingBase = true
-        baseModelItem.title = "Base — Downloading…"
-        baseModelItem.isEnabled = false
+    private func downloadModel(file: String, menuItem: NSMenuItem) {
+        let baseLabel = menuItem.title.components(separatedBy: " —").first ?? menuItem.title
+        menuItem.title = "\(baseLabel) — Downloading…"
+        menuItem.isEnabled = false
 
-        let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin")!
+        let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(file)")!
         URLSession.shared.downloadTask(with: url) { [weak self] tmpURL, _, error in
             guard let self else { return }
             DispatchQueue.main.async {
-                self.isDownloadingBase = false
-                self.baseModelItem.isEnabled = true
-
+                menuItem.isEnabled = true
                 guard error == nil, let tmpURL else {
-                    self.baseModelItem.title = "Base — Download Failed"
+                    menuItem.title = "\(baseLabel) — Download Failed"
                     return
                 }
-
                 let home = FileManager.default.homeDirectoryForCurrentUser.path
                 let destDir = "\(home)/.yell/models"
-                let dest = URL(fileURLWithPath: "\(destDir)/ggml-base.en.bin")
+                let dest = URL(fileURLWithPath: "\(destDir)/\(file)")
                 try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
                 try? FileManager.default.moveItem(at: tmpURL, to: dest)
-
-                self.baseModelItem.title = "Base (accurate)"
-                self.switchModel(to: "ggml-base.en.bin", selecting: self.baseModelItem)
+                menuItem.title = baseLabel
+                self.switchModel(to: file, selecting: menuItem)
             }
         }.resume()
     }
