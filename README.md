@@ -1,5 +1,7 @@
 # Yell
 
+![License](https://img.shields.io/github/license/dumboguy03/yell) ![macOS](https://img.shields.io/badge/macOS-14%2B-blue)
+   
 <video src="https://github.com/user-attachments/assets/0ed28a2f-fbe5-41ea-bf30-a250fcfbe184"></video>
 
 Press a hotkey, speak, and your words are typed anywhere — no cloud, no subscription.
