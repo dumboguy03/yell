@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install CMake
-        run: brew install cmake
+        run: command -v cmake >/dev/null || brew install cmake
 
       - name: Download Whisper model
         run: ./download-model.sh
