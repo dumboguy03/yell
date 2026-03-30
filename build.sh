@@ -41,9 +41,14 @@ ensure_whisper_checkout() {
         git clone --depth 1 --branch "$WHISPER_REF" "$WHISPER_REPO_URL" "$WHISPER_DIR"
     fi
 
-    git -C "$WHISPER_DIR" fetch --depth 1 origin "$WHISPER_REF"
     local target_commit current_commit
-    target_commit="$(git -C "$WHISPER_DIR" rev-parse FETCH_HEAD)"
+    if target_commit="$(git -C "$WHISPER_DIR" rev-parse --verify "$WHISPER_REF^{commit}" 2>/dev/null)"; then
+        echo "Using local whisper.cpp ref $WHISPER_REF..."
+    else
+        echo "Fetching whisper.cpp $WHISPER_REF..."
+        git -C "$WHISPER_DIR" fetch --depth 1 origin "$WHISPER_REF"
+        target_commit="$(git -C "$WHISPER_DIR" rev-parse FETCH_HEAD)"
+    fi
     current_commit="$(git -C "$WHISPER_DIR" rev-parse HEAD 2>/dev/null || true)"
 
     if [ "$current_commit" != "$target_commit" ]; then
