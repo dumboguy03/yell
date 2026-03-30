@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install CMake
-        run: brew install cmake
+        run: command -v cmake >/dev/null || brew install cmake
 
       - name: Download bundled Whisper model
         run: ./download-model.sh ggml-tiny.en.bin
