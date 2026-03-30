@@ -1,35 +1,78 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 APP_NAME="Yell"
 BUILD_DIR="build"
 WHISPER_DIR="vendor/whisper.cpp"
 WHISPER_BUILD="$WHISPER_DIR/build"
+WHISPER_REPO_URL="https://github.com/ggml-org/whisper.cpp.git"
+WHISPER_REF="${WHISPER_REF:-v1.8.4}"
 SDK="$(xcrun --show-sdk-path 2>/dev/null || echo /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)"
 
-# Clone whisper.cpp if needed
-if [ ! -d "$WHISPER_DIR" ]; then
-    echo "Cloning whisper.cpp..."
-    git clone --depth 1 https://github.com/ggerganov/whisper.cpp "$WHISPER_DIR"
-fi
+resolve_app_versions() {
+    GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+    BUILD_VERSION="${BUILD_VERSION:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 
-# Build whisper.cpp if needed
-if [ ! -f "$WHISPER_BUILD/src/libwhisper.a" ]; then
-    echo "Building whisper.cpp..."
+    if [ -z "${APP_VERSION:-}" ]; then
+        local exact_tag latest_tag
+        exact_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+        latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+        if [ -n "$exact_tag" ]; then
+            APP_VERSION="${exact_tag#v}"
+        elif [ -n "$latest_tag" ]; then
+            APP_VERSION="${latest_tag#v}"
+        else
+            APP_VERSION="0.0.0"
+        fi
+    fi
+}
+
+ensure_whisper_checkout() {
+    if [ -d "$WHISPER_DIR" ] && [ ! -d "$WHISPER_DIR/.git" ]; then
+        echo "Expected $WHISPER_DIR to be a git checkout" >&2
+        exit 1
+    fi
+
+    if [ ! -d "$WHISPER_DIR" ]; then
+        echo "Cloning whisper.cpp $WHISPER_REF..."
+        git clone --depth 1 --branch "$WHISPER_REF" "$WHISPER_REPO_URL" "$WHISPER_DIR"
+    fi
+
+    git -C "$WHISPER_DIR" fetch --depth 1 origin "$WHISPER_REF"
+    local target_commit current_commit
+    target_commit="$(git -C "$WHISPER_DIR" rev-parse FETCH_HEAD)"
+    current_commit="$(git -C "$WHISPER_DIR" rev-parse HEAD 2>/dev/null || true)"
+
+    if [ "$current_commit" != "$target_commit" ]; then
+        echo "Checking out whisper.cpp $WHISPER_REF ($target_commit)..."
+        git -C "$WHISPER_DIR" checkout --detach "$target_commit"
+        rm -rf "$WHISPER_BUILD"
+    fi
+
+    echo "Using whisper.cpp $WHISPER_REF ($(git -C "$WHISPER_DIR" rev-parse --short HEAD))"
+}
+
+resolve_app_versions
+ensure_whisper_checkout
+
+echo "Configuring whisper.cpp..."
+(
     cd "$WHISPER_DIR"
     cmake -B build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+        -DCMAKE_OSX_SYSROOT="$SDK" \
         -DBUILD_SHARED_LIBS=OFF \
         -DWHISPER_BUILD_EXAMPLES=OFF \
         -DWHISPER_BUILD_TESTS=OFF \
         -DGGML_METAL=ON \
         -DGGML_ACCELERATE=ON \
         -DGGML_NATIVE=OFF
-    cmake --build build --config Release -j$(sysctl -n hw.ncpu)
-    cd ../..
-fi
+    cmake --build build --config Release -j"$(sysctl -n hw.ncpu)"
+)
 
-echo "Compiling $APP_NAME..."
+echo "Compiling $APP_NAME $APP_VERSION ($BUILD_VERSION / $GIT_SHA)..."
 mkdir -p "$BUILD_DIR"
 
 swiftc \
@@ -79,7 +122,7 @@ else
     echo "⚠️  tiny.en model not found at $TINY_MODEL — run ./download-model.sh first"
 fi
 
-cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
+cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -91,9 +134,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <key>CFBundleName</key>
     <string>Yell</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>$BUILD_VERSION</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$APP_VERSION</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -102,6 +145,10 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Yell needs microphone access to record audio for transcription.</string>
+    <key>YellGitCommit</key>
+    <string>$GIT_SHA</string>
+    <key>YellWhisperRef</key>
+    <string>$WHISPER_REF</string>
 </dict>
 </plist>
 PLIST

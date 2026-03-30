@@ -14,15 +14,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install CMake
         run: brew install cmake
 
-      - name: Download Whisper model
-        run: ./download-model.sh
+      - name: Download bundled Whisper model
+        run: ./download-model.sh ggml-tiny.en.bin
 
       - name: Package
-        run: ./package.sh
+        run: APP_VERSION="${GITHUB_REF_NAME#v}" ./package.sh
 
       - name: Create release
         run: |

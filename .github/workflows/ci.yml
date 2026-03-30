@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-build:
+    runs-on: macos-14  # Apple Silicon
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install CMake
+        run: brew install cmake
+
+      - name: Download bundled Whisper model
+        run: ./download-model.sh ggml-tiny.en.bin
+
+      - name: Build app
+        run: ./build.sh
+
+      - name: Verify app bundle
+        run: |
+          test -x build/Yell.app/Contents/MacOS/Yell
+          test -f build/Yell.app/Contents/Resources/ggml-tiny.en.bin
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/Yell.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' build/Yell.app/Contents/Info.plist
