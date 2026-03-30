@@ -44,6 +44,10 @@ Go to System Settings → Privacy & Security and click "Open Anyway", or right-c
 
 Grant microphone and accessibility access when prompted — microphone for recording, accessibility for typing the result.
 
+## Release Notes
+
+For packaged releases, check [GitHub Releases](../../releases) for the latest changes and install notes.
+
 ## Model Selection 
 Bundled with tiny model loaded in memory, but Base model can be downloaded on demand from the menu 
 (Improved accuracy, larger resource hit)
