@@ -49,6 +49,20 @@ class Transcriber {
         }
     }
 
+    private static func createContext(modelPath: String) -> OpaquePointer? {
+        let cparams = whisper_context_default_params()
+        return whisper_init_from_file_with_params(modelPath, cparams)
+    }
+
+    static func canLoadModel(atPath path: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: path),
+              let ctx = createContext(modelPath: path) else {
+            return false
+        }
+        whisper_free(ctx)
+        return true
+    }
+
     private func reloadLocked() -> Bool {
         if let ctx = context {
             whisper_free(ctx)
@@ -63,8 +77,7 @@ class Transcriber {
             return false
         }
 
-        let cparams = whisper_context_default_params()
-        context = whisper_init_from_file_with_params(modelPath, cparams)
+        context = Transcriber.createContext(modelPath: modelPath)
         if context == nil {
             print("Failed to initialize whisper context")
             return false

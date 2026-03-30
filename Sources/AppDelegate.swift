@@ -58,17 +58,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let current = UserDefaults.standard.string(forKey: Transcriber.modelKey) ?? Transcriber.defaultModel
         let modelMenu = NSMenu()
 
-        tinyModelItem = NSMenuItem(title: "Tiny (faster)", action: #selector(selectModel(_:)), keyEquivalent: "")
+        tinyModelItem = NSMenuItem(title: modelMenuTitle(file: "ggml-tiny.en.bin"), action: #selector(selectModel(_:)), keyEquivalent: "")
         tinyModelItem.representedObject = "ggml-tiny.en.bin"
         tinyModelItem.state = "ggml-tiny.en.bin" == current ? .on : .off
         modelMenu.addItem(tinyModelItem)
 
-        baseModelItem = NSMenuItem(title: downloadableModelTitle(file: "ggml-base.en.bin", label: "Base"), action: #selector(selectModel(_:)), keyEquivalent: "")
+        baseModelItem = NSMenuItem(title: modelMenuTitle(file: "ggml-base.en.bin"), action: #selector(selectModel(_:)), keyEquivalent: "")
         baseModelItem.representedObject = "ggml-base.en.bin"
         baseModelItem.state = "ggml-base.en.bin" == current ? .on : .off
         modelMenu.addItem(baseModelItem)
 
-        smallModelItem = NSMenuItem(title: downloadableModelTitle(file: "ggml-small.en.bin", label: "Small (~466MB)"), action: #selector(selectModel(_:)), keyEquivalent: "")
+        smallModelItem = NSMenuItem(title: modelMenuTitle(file: "ggml-small.en.bin"), action: #selector(selectModel(_:)), keyEquivalent: "")
         smallModelItem.representedObject = "ggml-small.en.bin"
         smallModelItem.state = "ggml-small.en.bin" == current ? .on : .off
         modelMenu.addItem(smallModelItem)
@@ -94,6 +94,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
         refreshPermissionItems()
+        refreshModelItems()
     }
 
     private func refreshPermissionItems() {
@@ -150,10 +151,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Model Selection
 
+    private func baseModelLabel(for file: String) -> String {
+        switch file {
+        case "ggml-tiny.en.bin":
+            return "Tiny (faster)"
+        case "ggml-base.en.bin":
+            return "Base"
+        case "ggml-small.en.bin":
+            return "Small (~466MB)"
+        default:
+            return file
+        }
+    }
+
+    private func userModelDirectoryURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".yell", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
+    }
+
+    private func userModelURL(for file: String) -> URL {
+        userModelDirectoryURL().appendingPathComponent(file)
+    }
+
+    private func downloadedModelPath(for file: String) -> String? {
+        guard Bundle.main.path(forResource: file, ofType: nil) == nil else { return nil }
+        let path = userModelURL(for: file).path
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
     private func modelExists(_ file: String) -> Bool {
-        if Bundle.main.path(forResource: file, ofType: nil) != nil { return true }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return FileManager.default.fileExists(atPath: "\(home)/.yell/models/\(file)")
+        Bundle.main.path(forResource: file, ofType: nil) != nil || downloadedModelPath(for: file) != nil
     }
 
     private var currentModelFile: String {
@@ -168,10 +196,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modelExists(file) ? label : "\(label) — Download"
     }
 
+    private func modelMenuTitle(file: String) -> String {
+        downloadableModelTitle(file: file, label: baseModelLabel(for: file))
+    }
+
     private func refreshModelMenu(selectedFile: String? = nil, useCurrentSelection: Bool = true) {
-        tinyModelItem.title = "Tiny (faster)"
-        baseModelItem.title = downloadableModelTitle(file: "ggml-base.en.bin", label: "Base")
-        smallModelItem.title = downloadableModelTitle(file: "ggml-small.en.bin", label: "Small (~466MB)")
+        tinyModelItem.title = modelMenuTitle(file: "ggml-tiny.en.bin")
+        baseModelItem.title = modelMenuTitle(file: "ggml-base.en.bin")
+        smallModelItem.title = modelMenuTitle(file: "ggml-small.en.bin")
 
         let file = useCurrentSelection ? (selectedFile ?? currentModelFile) : selectedFile
         modelItems.forEach { item in
@@ -191,6 +223,58 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshModelMenu(selectedFile: selectedFile, useCurrentSelection: useCurrentSelection)
     }
 
+    private func installDownloadedModel(from temporaryURL: URL, to destinationURL: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: userModelDirectoryURL(), withIntermediateDirectories: true)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+        try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+    }
+
+    private func stagedDownloadedModelURL(for file: String) -> URL {
+        userModelDirectoryURL().appendingPathComponent("\(file).download")
+    }
+
+    private func persistDownloadedModelTemporarily(from temporaryURL: URL, for file: String) throws -> URL {
+        let fileManager = FileManager.default
+        let stagedURL = stagedDownloadedModelURL(for: file)
+        try fileManager.createDirectory(at: userModelDirectoryURL(), withIntermediateDirectories: true)
+        if fileManager.fileExists(atPath: stagedURL.path) {
+            try fileManager.removeItem(at: stagedURL)
+        }
+        try fileManager.moveItem(at: temporaryURL, to: stagedURL)
+        return stagedURL
+    }
+
+    private func removeDownloadedModelTemporarily(at stagedURL: URL) {
+        try? FileManager.default.removeItem(at: stagedURL)
+    }
+
+    private func discardInvalidDownloadedModel(file: String) {
+        guard let path = downloadedModelPath(for: file) else { return }
+        try? FileManager.default.removeItem(atPath: path)
+        refreshModelMenu()
+    }
+
+    private func showInvalidDownloadedModelAlert(file: String) {
+        let alert = NSAlert()
+        alert.messageText = "Downloaded Model Is Invalid"
+        alert.informativeText = "\(file) could not be loaded and was removed from ~/.yell/models/. Download it again to use it."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func showModelLoadFailedAlert(file: String) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn't Load \(file)"
+        alert.informativeText = "Yell restored the previous model. Try downloading \(file) again if the problem persists."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     @objc private func selectModel(_ sender: NSMenuItem) {
         guard !isSwitchingModel else { return }
         guard let file = sender.representedObject as? String else { return }
@@ -208,11 +292,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
+        if let path = downloadedModelPath(for: file),
+           !Transcriber.canLoadModel(atPath: path) {
+            discardInvalidDownloadedModel(file: file)
+            showInvalidDownloadedModelAlert(file: file)
+            return
+        }
+
         switchModel(to: file, selecting: sender, previousFile: previousFile)
     }
 
     private func switchModel(to file: String, selecting item: NSMenuItem, previousFile: String, beginOperation: Bool = true) {
-        let baseLabel = item.title.components(separatedBy: " —").first ?? item.title
+        let baseLabel = baseModelLabel(for: file)
         if beginOperation {
             beginModelOperation(statusTitle: "\(baseLabel) — Loading…", on: item)
         }
@@ -232,13 +323,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(previousFile, forKey: Transcriber.modelKey)
         transcriber.reload { [weak self] restored in
             guard let self else { return }
-            self.showModelSwitchFailedAlert(file: attemptedFile, restoredPreviousModel: restored)
-            self.endModelOperation(selectedFile: restored ? previousFile : nil, useCurrentSelection: restored)
+            guard restored else {
+                self.showModelMissingAlert()
+                return
+            }
+            self.showModelLoadFailedAlert(file: attemptedFile)
+            self.endModelOperation(selectedFile: previousFile)
         }
     }
 
     private func downloadModel(file: String, menuItem: NSMenuItem, previousFile: String) {
-        let baseLabel = menuItem.title.components(separatedBy: " —").first ?? menuItem.title
+        let baseLabel = baseModelLabel(for: file)
         beginModelOperation(statusTitle: "\(baseLabel) — Downloading…", on: menuItem)
 
         guard let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(file)") else {
@@ -249,31 +344,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         URLSession.shared.downloadTask(with: url) { [weak self] tmpURL, response, error in
             guard let self else { return }
-            DispatchQueue.main.async {
-                let httpStatus = (response as? HTTPURLResponse)?.statusCode
-                guard error == nil, let tmpURL, httpStatus == 200 else {
+            let httpStatus = (response as? HTTPURLResponse)?.statusCode
+            guard error == nil, let tmpURL, httpStatus == 200 else {
+                DispatchQueue.main.async {
                     self.endModelOperation(selectedFile: previousFile)
                     let details = httpStatus.map { "Server responded with HTTP \($0)." }
                     self.showModelDownloadFailedAlert(file: file, details: details)
-                    return
                 }
+                return
+            }
 
-                let home = FileManager.default.homeDirectoryForCurrentUser.path
-                let destDir = "\(home)/.yell/models"
-                let dest = URL(fileURLWithPath: "\(destDir)/\(file)")
-
-                do {
-                    try FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-                    if FileManager.default.fileExists(atPath: dest.path) {
-                        try FileManager.default.removeItem(at: dest)
-                    }
-                    try FileManager.default.moveItem(at: tmpURL, to: dest)
-                } catch {
+            let stagedURL: URL
+            do {
+                stagedURL = try self.persistDownloadedModelTemporarily(from: tmpURL, for: file)
+            } catch {
+                DispatchQueue.main.async {
                     self.endModelOperation(selectedFile: previousFile)
                     self.showModelDownloadFailedAlert(file: file, details: error.localizedDescription)
-                    return
                 }
+                return
+            }
 
+            guard Transcriber.canLoadModel(atPath: stagedURL.path) else {
+                self.removeDownloadedModelTemporarily(at: stagedURL)
+                DispatchQueue.main.async {
+                    self.endModelOperation(selectedFile: previousFile)
+                    self.showInvalidDownloadedModelAlert(file: file)
+                }
+                return
+            }
+
+            do {
+                try self.installDownloadedModel(from: stagedURL, to: self.userModelURL(for: file))
+            } catch {
+                self.removeDownloadedModelTemporarily(at: stagedURL)
+                DispatchQueue.main.async {
+                    self.endModelOperation(selectedFile: previousFile)
+                    self.showModelDownloadFailedAlert(file: file, details: error.localizedDescription)
+                }
+                return
+            }
+
+            DispatchQueue.main.async {
                 self.switchModel(to: file, selecting: menuItem, previousFile: previousFile, beginOperation: false)
             }
         }.resume()
