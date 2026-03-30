@@ -8,6 +8,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let keyboardInjector = KeyboardInjector()
     private var hotkeyManager: HotkeyManager!
     private var isRecording = false
+    private var isTranscribing = false
+    private var isSwitchingModel = false
 
     // Menu item refs for dynamic updates
     private var hotkeyLabelItem: NSMenuItem!
@@ -15,6 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var axStatusItem: NSMenuItem!
     private var tinyModelItem: NSMenuItem!
     private var baseModelItem: NSMenuItem!
+    private var smallModelItem: NSMenuItem!
     private var hotkeyCapture: HotkeyCapture?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -65,10 +68,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         baseModelItem.state = "ggml-base.en.bin" == current ? .on : .off
         modelMenu.addItem(baseModelItem)
 
-        let smallItem = NSMenuItem(title: downloadableModelTitle(file: "ggml-small.en.bin", label: "Small (~466MB)"), action: #selector(selectModel(_:)), keyEquivalent: "")
-        smallItem.representedObject = "ggml-small.en.bin"
-        smallItem.state = "ggml-small.en.bin" == current ? .on : .off
-        modelMenu.addItem(smallItem)
+        smallModelItem = NSMenuItem(title: downloadableModelTitle(file: "ggml-small.en.bin", label: "Small (~466MB)"), action: #selector(selectModel(_:)), keyEquivalent: "")
+        smallModelItem.representedObject = "ggml-small.en.bin"
+        smallModelItem.state = "ggml-small.en.bin" == current ? .on : .off
+        modelMenu.addItem(smallModelItem)
 
         let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
         menu.addItem(modelItem)
@@ -153,12 +156,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return FileManager.default.fileExists(atPath: "\(home)/.yell/models/\(file)")
     }
 
+    private var currentModelFile: String {
+        UserDefaults.standard.string(forKey: Transcriber.modelKey) ?? Transcriber.defaultModel
+    }
+
+    private var modelItems: [NSMenuItem] {
+        [tinyModelItem, baseModelItem, smallModelItem].compactMap { $0 }
+    }
+
     private func downloadableModelTitle(file: String, label: String) -> String {
         modelExists(file) ? label : "\(label) — Download"
     }
 
+    private func refreshModelMenu(selectedFile: String? = nil, useCurrentSelection: Bool = true) {
+        tinyModelItem.title = "Tiny (faster)"
+        baseModelItem.title = downloadableModelTitle(file: "ggml-base.en.bin", label: "Base")
+        smallModelItem.title = downloadableModelTitle(file: "ggml-small.en.bin", label: "Small (~466MB)")
+
+        let file = useCurrentSelection ? (selectedFile ?? currentModelFile) : selectedFile
+        modelItems.forEach { item in
+            item.state = (file != nil && item.representedObject as? String == file) ? .on : .off
+            item.isEnabled = !isSwitchingModel
+        }
+    }
+
+    private func beginModelOperation(statusTitle: String, on item: NSMenuItem) {
+        isSwitchingModel = true
+        modelItems.forEach { $0.isEnabled = false }
+        item.title = statusTitle
+    }
+
+    private func endModelOperation(selectedFile: String? = nil, useCurrentSelection: Bool = true) {
+        isSwitchingModel = false
+        refreshModelMenu(selectedFile: selectedFile, useCurrentSelection: useCurrentSelection)
+    }
+
     @objc private func selectModel(_ sender: NSMenuItem) {
+        guard !isSwitchingModel else { return }
         guard let file = sender.representedObject as? String else { return }
+        let previousFile = currentModelFile
+        guard file != previousFile else { return }
 
         if !modelExists(file) {
             let alert = NSAlert()
@@ -167,46 +204,77 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert.addButton(withTitle: "Download")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
-            downloadModel(file: file, menuItem: sender)
+            downloadModel(file: file, menuItem: sender, previousFile: previousFile)
             return
         }
 
-        switchModel(to: file, selecting: sender)
+        switchModel(to: file, selecting: sender, previousFile: previousFile)
     }
 
-    private func switchModel(to file: String, selecting item: NSMenuItem) {
+    private func switchModel(to file: String, selecting item: NSMenuItem, previousFile: String, beginOperation: Bool = true) {
+        let baseLabel = item.title.components(separatedBy: " —").first ?? item.title
+        if beginOperation {
+            beginModelOperation(statusTitle: "\(baseLabel) — Loading…", on: item)
+        }
+
         UserDefaults.standard.set(file, forKey: Transcriber.modelKey)
-        guard transcriber.reload() else {
-            showModelMissingAlert()
-            return
+        transcriber.reload { [weak self] success in
+            guard let self else { return }
+            guard success else {
+                self.restorePreviousModel(previousFile, afterFailingToLoad: file)
+                return
+            }
+            self.endModelOperation(selectedFile: file)
         }
-        [tinyModelItem, baseModelItem].forEach { $0?.state = .off }
-        // also clear any other model items
-        item.menu?.items.forEach { $0.state = .off }
-        item.state = .on
     }
 
-    private func downloadModel(file: String, menuItem: NSMenuItem) {
-        let baseLabel = menuItem.title.components(separatedBy: " —").first ?? menuItem.title
-        menuItem.title = "\(baseLabel) — Downloading…"
-        menuItem.isEnabled = false
+    private func restorePreviousModel(_ previousFile: String, afterFailingToLoad attemptedFile: String) {
+        UserDefaults.standard.set(previousFile, forKey: Transcriber.modelKey)
+        transcriber.reload { [weak self] restored in
+            guard let self else { return }
+            self.showModelSwitchFailedAlert(file: attemptedFile, restoredPreviousModel: restored)
+            self.endModelOperation(selectedFile: restored ? previousFile : nil, useCurrentSelection: restored)
+        }
+    }
 
-        let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(file)")!
-        URLSession.shared.downloadTask(with: url) { [weak self] tmpURL, _, error in
+    private func downloadModel(file: String, menuItem: NSMenuItem, previousFile: String) {
+        let baseLabel = menuItem.title.components(separatedBy: " —").first ?? menuItem.title
+        beginModelOperation(statusTitle: "\(baseLabel) — Downloading…", on: menuItem)
+
+        guard let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(file)") else {
+            endModelOperation(selectedFile: previousFile)
+            showModelDownloadFailedAlert(file: file, details: "Invalid download URL.")
+            return
+        }
+
+        URLSession.shared.downloadTask(with: url) { [weak self] tmpURL, response, error in
             guard let self else { return }
             DispatchQueue.main.async {
-                menuItem.isEnabled = true
-                guard error == nil, let tmpURL else {
-                    menuItem.title = "\(baseLabel) — Download Failed"
+                let httpStatus = (response as? HTTPURLResponse)?.statusCode
+                guard error == nil, let tmpURL, httpStatus == 200 else {
+                    self.endModelOperation(selectedFile: previousFile)
+                    let details = httpStatus.map { "Server responded with HTTP \($0)." }
+                    self.showModelDownloadFailedAlert(file: file, details: details)
                     return
                 }
+
                 let home = FileManager.default.homeDirectoryForCurrentUser.path
                 let destDir = "\(home)/.yell/models"
                 let dest = URL(fileURLWithPath: "\(destDir)/\(file)")
-                try? FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-                try? FileManager.default.moveItem(at: tmpURL, to: dest)
-                menuItem.title = baseLabel
-                self.switchModel(to: file, selecting: menuItem)
+
+                do {
+                    try FileManager.default.createDirectory(atPath: destDir, withIntermediateDirectories: true)
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        try FileManager.default.removeItem(at: dest)
+                    }
+                    try FileManager.default.moveItem(at: tmpURL, to: dest)
+                } catch {
+                    self.endModelOperation(selectedFile: previousFile)
+                    self.showModelDownloadFailedAlert(file: file, details: error.localizedDescription)
+                    return
+                }
+
+                self.switchModel(to: file, selecting: menuItem, previousFile: previousFile, beginOperation: false)
             }
         }.resume()
     }
@@ -224,13 +292,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Recording Flow
 
     private func startRecording() {
-        guard !isRecording else { return }
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.startRecording()
+            }
+            return
+        }
+        guard !isRecording, !isTranscribing, !isSwitchingModel else { return }
         isRecording = true
         updateIcon(recording: true)
         audioRecorder.startRecording()
     }
 
     private func stopRecording() {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.stopRecording()
+            }
+            return
+        }
         guard isRecording else { return }
         isRecording = false
         updateIcon(recording: false)
@@ -238,25 +318,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let samples = audioRecorder.stopRecording()
         guard !samples.isEmpty else { return }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        isTranscribing = true
+        transcriber.transcribe(samples: samples) { [weak self] text in
             guard let self else { return }
-            let text = self.transcriber.transcribe(samples: samples)
+            self.isTranscribing = false
             guard !text.isEmpty else { return }
-            DispatchQueue.main.async { self.keyboardInjector.type(text) }
+            self.keyboardInjector.type(text)
         }
     }
 
     // MARK: - Alerts
 
     private func showModelMissingAlert() {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Whisper Model Not Found"
-            alert.informativeText = "Run ./download-model.sh to fetch the models."
-            alert.alertStyle = .critical
-            alert.addButton(withTitle: "Quit")
-            alert.runModal()
-            NSApp.terminate(nil)
-        }
+        let alert = NSAlert()
+        alert.messageText = "Whisper Model Not Found"
+        alert.informativeText = "Run ./download-model.sh to fetch the models."
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Quit")
+        alert.runModal()
+        NSApp.terminate(nil)
+    }
+
+    private func showModelSwitchFailedAlert(file: String, restoredPreviousModel: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "Could not switch to \(file)"
+        alert.informativeText = restoredPreviousModel
+            ? "Yell kept using the previous model."
+            : "Yell could not restore the previous model. Restart the app or re-download the model."
+        alert.alertStyle = .warning
+        alert.runModal()
+    }
+
+    private func showModelDownloadFailedAlert(file: String, details: String? = nil) {
+        let alert = NSAlert()
+        alert.messageText = "Download failed for \(file)"
+        alert.informativeText = details ?? "Check your network connection and try again."
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 }

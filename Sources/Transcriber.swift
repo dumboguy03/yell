@@ -2,10 +2,16 @@ import Foundation
 import CWhisper
 
 class Transcriber {
+    private let queue = DispatchQueue(label: "com.yell.transcriber", qos: .userInitiated)
+    private let queueKey = DispatchSpecificKey<UInt8>()
     private var context: OpaquePointer?
 
     static let modelKey = "selectedModel"
     static let defaultModel = "ggml-tiny.en.bin"
+
+    init() {
+        queue.setSpecific(key: queueKey, value: 1)
+    }
 
     private var modelPath: String {
         let model = UserDefaults.standard.string(forKey: Transcriber.modelKey) ?? Transcriber.defaultModel
@@ -17,15 +23,41 @@ class Transcriber {
         return "\(home)/.yell/models/\(model)"
     }
 
-    func reload() -> Bool {
+    func loadModel() -> Bool {
+        queue.sync {
+            loadModelLocked()
+        }
+    }
+
+    func reload(completion: @escaping (Bool) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let success = self.reloadLocked()
+            DispatchQueue.main.async {
+                completion(success)
+            }
+        }
+    }
+
+    func transcribe(samples: [Float], completion: @escaping (String) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let text = self.transcribeLocked(samples: samples)
+            DispatchQueue.main.async {
+                completion(text)
+            }
+        }
+    }
+
+    private func reloadLocked() -> Bool {
         if let ctx = context {
             whisper_free(ctx)
             context = nil
         }
-        return loadModel()
+        return loadModelLocked()
     }
 
-    func loadModel() -> Bool {
+    private func loadModelLocked() -> Bool {
         guard FileManager.default.fileExists(atPath: modelPath) else {
             print("Model not found at \(modelPath)")
             return false
@@ -41,7 +73,7 @@ class Transcriber {
         return true
     }
 
-    func transcribe(samples: [Float]) -> String {
+    private func transcribeLocked(samples: [Float]) -> String {
         guard let ctx = context else { return "" }
 
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
@@ -51,6 +83,8 @@ class Transcriber {
         params.print_special = false
         params.print_progress = false
         params.print_realtime = false
+        // whisper_full must run inside this closure because params.language
+        // points into a Swift-managed C string buffer.
         let result = "en".withCString { langCStr in
             params.language = langCStr
             return samples.withUnsafeBufferPointer { bufferPointer in
@@ -75,8 +109,16 @@ class Transcriber {
     }
 
     deinit {
-        if let ctx = context {
-            whisper_free(ctx)
+        let freeContext = { [self] in
+            if let ctx = self.context {
+                whisper_free(ctx)
+            }
+        }
+
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            freeContext()
+        } else {
+            queue.sync(execute: freeContext)
         }
     }
 }
