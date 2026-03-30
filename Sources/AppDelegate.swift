@@ -323,7 +323,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.isTranscribing = false
             guard !text.isEmpty else { return }
-            self.keyboardInjector.type(text)
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.keyboardInjector.type(text)
+            }
         }
     }
 
