@@ -3,6 +3,11 @@ set -euo pipefail
 
 MODEL_DIR="$HOME/.yell/models"
 BASE_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+DEFAULT_MODELS=(
+    "ggml-tiny.en.bin"
+    "ggml-base.en.bin"
+    "ggml-small.en.bin"
+)
 
 mkdir -p "$MODEL_DIR"
 
@@ -25,6 +30,11 @@ download_if_missing() {
     fi
 }
 
-download_if_missing "ggml-tiny.en.bin"
-download_if_missing "ggml-base.en.bin"
-download_if_missing "ggml-small.en.bin"
+MODELS=("$@")
+if [ "${#MODELS[@]}" -eq 0 ]; then
+    MODELS=("${DEFAULT_MODELS[@]}")
+fi
+
+for model in "${MODELS[@]}"; do
+    download_if_missing "$model"
+done
