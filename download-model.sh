@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 MODEL_DIR="$HOME/.yell/models"
 BASE_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
@@ -13,7 +13,14 @@ download_if_missing() {
         echo "$name already exists, skipping."
     else
         echo "Downloading $name..."
-        curl -L --progress-bar -o "$path" "$BASE_URL/$name"
+        local tmp_path="$path.download"
+        rm -f "$tmp_path"
+        local curl_progress="--no-progress-meter"
+        if [ -t 2 ]; then
+            curl_progress="--progress-bar"
+        fi
+        curl -fL --retry 3 "$curl_progress" -o "$tmp_path" "$BASE_URL/$name"
+        mv "$tmp_path" "$path"
         echo "Downloaded to $path"
     fi
 }
