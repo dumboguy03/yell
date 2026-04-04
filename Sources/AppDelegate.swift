@@ -324,6 +324,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         transcriber.reload { [weak self] restored in
             guard let self else { return }
             guard restored else {
+                self.endModelOperation(selectedFile: nil, useCurrentSelection: false)
                 self.showModelMissingAlert()
                 return
             }
