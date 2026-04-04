@@ -323,6 +323,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.isTranscribing = false
             guard !text.isEmpty else { return }
+            // KeyboardInjector posts CGEvents and does not touch AppKit, so it can run off-main.
             self.keyboardInjector.type(text)
         }
     }
