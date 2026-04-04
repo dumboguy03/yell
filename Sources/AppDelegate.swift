@@ -94,7 +94,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === statusItem.menu else { return }
         refreshPermissionItems()
-        refreshModelItems()
+        refreshModelMenu()
     }
 
     private func refreshPermissionItems() {
