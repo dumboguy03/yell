@@ -1,8 +1,13 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 MODEL_DIR="$HOME/.yell/models"
 BASE_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+DEFAULT_MODELS=(
+    "ggml-tiny.en.bin"
+    "ggml-base.en.bin"
+    "ggml-small.en.bin"
+)
 
 mkdir -p "$MODEL_DIR"
 
@@ -13,11 +18,16 @@ download_if_missing() {
         echo "$name already exists, skipping."
     else
         echo "Downloading $name..."
-        curl -L --progress-bar -o "$path" "$BASE_URL/$name"
+        curl -fL --retry 3 --progress-bar -o "$path" "$BASE_URL/$name"
         echo "Downloaded to $path"
     fi
 }
 
-download_if_missing "ggml-tiny.en.bin"
-download_if_missing "ggml-base.en.bin"
-download_if_missing "ggml-small.en.bin"
+MODELS=("$@")
+if [ "${#MODELS[@]}" -eq 0 ]; then
+    MODELS=("${DEFAULT_MODELS[@]}")
+fi
+
+for model in "${MODELS[@]}"; do
+    download_if_missing "$model"
+done
